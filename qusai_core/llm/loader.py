@@ -1,7 +1,9 @@
 import os
 import logging
 from abc import ABC, abstractmethod
-from huggingface_hub import hf_hub_download
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
+from threading import Thread
 
 logger = logging.getLogger(__name__)
 
@@ -14,55 +16,54 @@ class ModelInterface(ABC):
     def load(self):
         pass
 
-class GGUFModel(ModelInterface):
+class TransformersModel(ModelInterface):
     """
-    Optimized CPU Loader using Llama.cpp (GGUF format).
-    Perfect for running 7B/8B models on Free Tier HF Spaces (16GB RAM).
+    GPU-Accelerated Loader using Hugging Face Transformers.
+    Designed for HF Spaces with ZeroGPU (A100).
     """
-    def __init__(self, repo_id: str, filename: str):
+    def __init__(self, repo_id: str):
         self.repo_id = repo_id
-        self.filename = filename
-        self.llm = None
+        self.model = None
+        self.tokenizer = None
         self.is_ready = False
 
     def load(self):
         try:
-            from llama_cpp import Llama
-            logger.info(f"Downloading {self.filename} from {self.repo_id}...")
+            logger.info(f"Loading {self.repo_id} on GPU...")
             
-            model_path = hf_hub_download(
-                repo_id=self.repo_id, 
-                filename=self.filename
+            self.tokenizer = AutoTokenizer.from_pretrained(self.repo_id)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.repo_id,
+                torch_dtype=torch.bfloat16,
+                device_map="auto"
             )
             
-            logger.info(f"Loading GGUF model into RAM...")
-            # n_ctx=4096 is a safe context window for CPU
-            # n_threads=2 matches the free tier 2 vCPU limit
-            self.llm = Llama(
-                model_path=model_path,
-                n_ctx=4096,
-                n_threads=2, 
-                verbose=False
-            )
             self.is_ready = True
-            logger.info("✓ Model Loaded Successfully (GGUF/CPU Optimized)")
+            logger.info("✓ Model Loaded Successfully (GPU/Transformers)")
             
         except Exception as e:
-            logger.error(f"Failed to load GGUF model: {e}")
+            logger.error(f"Failed to load Transformers model: {e}")
 
-    def generate(self, prompt: str, max_new_tokens: int = 256) -> str:
+    def generate(self, prompt: str, max_new_tokens: int = 512) -> str:
         if not self.is_ready:
             return "[Model Not Loaded]"
             
         try:
-            output = self.llm(
-                prompt, 
-                max_tokens=max_new_tokens, 
-                stop=["Question:", "User:", "System:"], 
-                echo=False,
-                temperature=0.7
-            )
-            return output['choices'][0]['text'].strip()
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+            
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    temperature=0.7,
+                    do_sample=True,
+                    top_p=0.9
+                )
+            
+            # Decode only the new tokens
+            generated_text = self.tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+            return generated_text.strip()
+
         except Exception as e:
             logger.error(f"Generation Error: {e}")
             return f"Error: {e}"

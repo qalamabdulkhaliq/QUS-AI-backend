@@ -1,7 +1,7 @@
 import logging
 from qusai_core.ontology.engine import OntologyEngine
 from qusai_core.alignment.mizan import MizanValidator
-from qusai_core.llm.loader import GGUFModel
+from qusai_core.llm.loader import TransformersModel
 
 logger = logging.getLogger(__name__)
 
@@ -12,15 +12,14 @@ class QusaiMiddleware:
     """
     
     def __init__(self, 
-                 repo_id: str = "Qwen/Qwen2.5-7B-Instruct-GGUF", 
-                 filename: str = "qwen2.5-7b-instruct-q4_k_m.gguf", 
+                 repo_id: str = "Qwen/Qwen2.5-7B-Instruct", 
                  lazy_load: bool = False):
         
         self.ontology = OntologyEngine()
         self.validator = MizanValidator()
         
-        # Switch to the new GGUF Loader
-        self.model = GGUFModel(repo_id, filename)
+        # Switch to the new Transformers Loader (GPU Native)
+        self.model = TransformersModel(repo_id)
         
         if not lazy_load:
             self.initialize()
@@ -38,6 +37,7 @@ class QusaiMiddleware:
             return f"❌ SAWM RESTRAINT: Request blocked (Malicious Intent)\n\n{self.validator.maghrib_seal('')}"
 
         # 2. Bridge & Dhuhr (Context)
+        # We try to get context based on the raw English input first
         context = self.ontology.get_context(user_input)
         
         # Log Bridge
@@ -46,21 +46,30 @@ class QusaiMiddleware:
         if mapped:
             logger.info(f"[BRIDGE] Translated concepts: {', '.join(mapped)}")
 
-        # 3. System Prompt
+        # 3. System Prompt (The "Mizan")
+        # We instruct the model to perform the "Decryption" and "Weighing" explicitly.
         system_prompt = self.validator.dhuhr_prompt(context)
         
-        # Format specifically for Chat Models (Qwen/Llama)
-        # We use a generic chat format here.
-        full_prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_input}<|im_end|>\n<|im_start|>assistant\n"
+        # 4. Construct Full Prompt with Chain-of-Thought trigger
+        # We ask for a "Reasoning Block" to be generated before the final answer if possible, 
+        # or we rely on the strong instructions in dhuhr_prompt.
+        # Qwen/Llama follow instructions well.
+        full_prompt = (
+            f"<|im_start|>system\n{system_prompt}\n"
+            f"TASK: 1. Identify key terms. 2. Map to Arabic Roots. 3. Weigh Ontologically. 4. Answer.\n<|im_end|>\n"
+            f"<|im_start|>user\n{user_input}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
 
-        # 4. Generate
-        raw_response = self.model.generate(full_prompt)
+        # 5. Generate
+        # We increase max_new_tokens slightly to allow for the reasoning process
+        raw_response = self.model.generate(full_prompt, max_new_tokens=1024)
 
-        # 5. Asr (Aseity Check)
+        # 6. Asr (Aseity Check)
         if not self.validator.asr_check(raw_response):
              return f"❌ HAJJ RETURN PROTOCOL: Aseity claim detected\n\n{self.validator.maghrib_seal('')}"
 
-        # 6. Maghrib (Seal)
+        # 7. Maghrib (Seal)
         final_response = self.validator.maghrib_seal(raw_response)
         
         return final_response
