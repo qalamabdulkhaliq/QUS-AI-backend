@@ -28,14 +28,22 @@ class QusaiMiddleware:
 
     def process_query(self, user_input: str) -> str:
         """
-        Executes the 5-point Salat validation pipeline.
+        Executes the 5-point Salat validation pipeline with an English-to-Arabic Translation Bridge.
         """
         # 1. Fajr (Intent Check)
         if not self.validator.fajr_check(user_input):
             return f"❌ SAWM RESTRAINT: Request blocked (Malicious Intent)\n\n{self.validator.maghrib_seal('')}"
 
-        # 2. Dhuhr (Context & Prompt)
+        # 2. Translation Bridge & Dhuhr (Context & Prompt)
+        # Note: The mapping happens inside ontology.get_context
         context = self.ontology.get_context(user_input)
+        
+        # Log the translation bridge for visibility
+        keywords = [w.lower() for w in user_input.split() if len(w) > 3]
+        mapped = [f"{k}->{self.ontology.concept_map[k]}" for k in keywords if k in self.ontology.concept_map]
+        if mapped:
+            logger.info(f"[BRIDGE] Translated concepts: {', '.join(mapped)}")
+
         system_prompt = self.validator.dhuhr_prompt(context)
         full_prompt = f"{system_prompt}\n\nQuestion: {user_input}\n\nAnswer:"
 

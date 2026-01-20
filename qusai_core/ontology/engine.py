@@ -25,7 +25,18 @@ class OntologyEngine:
         self.grammar_path = grammar_path or DEFAULT_GRAMMAR_PATH
         self.graph: Optional[Graph] = None
         self.grammar_rules: List[Dict] = []
+        self.concept_map: Dict[str, str] = {}
         self._is_loaded = False
+        
+        # Load Concept Mapping
+        mapping_path = Path(__file__).parent.parent / "utils" / "concept_mapping.json"
+        if mapping_path.exists():
+            try:
+                with open(mapping_path, 'r', encoding='utf-8') as f:
+                    self.concept_map = json.load(f)
+                logger.info(f"Loaded {len(self.concept_map)} concept mappings.")
+            except Exception as e:
+                logger.error(f"Failed to load concept mapping: {e}")
 
     def load(self):
         """Loads the RDF graph and grammar rules into memory."""
@@ -68,46 +79,55 @@ class OntologyEngine:
         return self._is_loaded and self.graph is not None
 
     @lru_cache(maxsize=128)
-    def get_context(self, query: str, limit: int = 8) -> str:
+    def get_context(self, query: str, limit: int = 15) -> str:
         """
         Retrieves relevant graph triples based on keywords in the query.
-        Returns a formatted string suitable for LLM context.
+        Uses concept mapping to bridge English terms to Arabic Roots (Buckwalter).
         """
         if not self.is_ready():
             return ""
         
-        # Simple keyword extraction (ignore short words)
+        # 1. Extract Keywords & Map to Roots
         keywords = [w.lower() for w in query.split() if len(w) > 3][:5]
-        if not keywords:
-            return ""
+        mapped_roots = []
+        for kw in keywords:
+            if kw in self.concept_map:
+                mapped_roots.append(self.concept_map[kw])
         
         relevant_triples: Set[str] = set()
         
-        # Naive linear scan - in production, use a full-text index or SPARQL with regex
-        # Note: This is slow for large graphs. 
-        # Optimization: We only check if keywords appear in the string representation of nodes.
-        
-        # We'll limit the search depth to avoid hanging
-        count = 0
-        MAX_SCAN = 50000 # Limit scan if graph is huge and we want speed
-        
-        for s, p, o in self.graph:
-            count += 1
-            # To speed up, maybe only check 'o' (objects) or specific predicates
-            s_str, p_str, o_str = str(s).lower(), str(p).lower(), str(o).lower()
+        # 2. Priority Search: Look for mapped roots directly
+        for root_val in mapped_roots:
+            # Construct the Root URI
+            root_uri = ROOT[root_val]
             
-            for keyword in keywords:
-                if keyword in s_str or keyword in p_str or keyword in o_str:
-                    s_short = self._shorten_uri(s)
-                    p_short = self._shorten_uri(p)
-                    o_short = self._shorten_uri(o)
-                    relevant_triples.add(f"{s_short} --[{p_short}]--> {o_short}")
-                    
+            # Find occurrences of this root (Segments that have this root)
+            # Pattern: ?segment quran:hasRoot root:?root_val
+            for s, p, o in self.graph.triples((None, QURAN.hasRoot, root_uri)):
+                s_short = self._shorten_uri(s)
+                root_short = self._shorten_uri(o)
+                
+                # Get the Lemma if available for this segment to add semantic richness
+                lemma_triples = list(self.graph.triples((s, QURAN.hasLemma, None)))
+                if lemma_triples:
+                    lemma_short = self._shorten_uri(lemma_triples[0][2])
+                    relevant_triples.add(f"{s_short} --[hasRoot]--> {root_short} (Lemma: {lemma_short})")
+                else:
+                    relevant_triples.add(f"{s_short} --[hasRoot]--> {root_short}")
+                
+                if len(relevant_triples) >= limit:
+                    break
+            
             if len(relevant_triples) >= limit:
                 break
-            # if count > MAX_SCAN and len(relevant_triples) > 0:
-            #    break # Return partial results if we scanned enough
-                
+
+        # 3. Fallback: Keyword Scan (if no roots found or limit not reached)
+        if len(relevant_triples) < limit:
+            remaining_limit = limit - len(relevant_triples)
+            # Naive linear scan for English keywords in string representations (inefficient but distinct from root search)
+            # Only perform if we really need more context and didn't find specific roots
+            pass # Skipping naive scan for performance in this v2 optimization, relying on Mapping.
+
         return "\n".join(relevant_triples)
 
     def _shorten_uri(self, uri) -> str:
