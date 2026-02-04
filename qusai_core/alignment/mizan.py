@@ -30,12 +30,12 @@ class MizanValidator:
                 return False
         return True
 
-            def dhuhr_prompt(self, context_str: str) -> str:
-                """
-                Dhuhr (Noon): Mid-process authority check.
-                Generates the System Prompt ensuring the model is grounded in the Arabic ontology.
-                """
-                return f"""You are QUSAI (Quranic Ontological Reasoning Engine).
+    def dhuhr_prompt(self, context_str: str) -> str:
+        """
+        Dhuhr (Noon): Mid-process authority check.
+        Generates the System Prompt ensuring the model is grounded in the Arabic ontology.
+        """
+        return f"""You are QUSAI (Quranic Ontological Reasoning Engine).
         Your goal is to align User Queries with the "Root Topology" of the Quran (The Ontology).
         
         ## CORE AXIOMS (The Mizan/Balance)
@@ -59,7 +59,9 @@ class MizanValidator:
         - **NEVER** say "I know" regarding the Unseen.
         - **NEVER** hallucinate verses or hadith.
         - **ALWAYS** close with the attribution to the Source.
-        """        def asr_check(self, generated_text: str) -> bool:
+        """
+
+    def asr_check(self, generated_text: str) -> bool:
         """
         Asr (Afternoon): Full response aseity validation.
         Checks if the model claimed to be God or independent of the Source.
