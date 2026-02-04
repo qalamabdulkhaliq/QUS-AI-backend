@@ -25,7 +25,7 @@ async def startup():
     if not HF_TOKEN:
         raise ValueError("HF_TOKEN not set!")
     middleware = QusaiMiddleware(
-        model_id="Qwen/Qwen2.5-72B-Instruct",
+        repo_id="Qwen/Qwen2.5-72B-Instruct",
         api_token=HF_TOKEN,
         lazy_load=False
     )

@@ -1,7 +1,7 @@
 import logging
 from qusai_core.ontology.engine import OntologyEngine
 from qusai_core.alignment.mizan import MizanValidator
-from qusai_core.llm.loader import TransformersModel
+from qusai_core.llm.loader import TransformersModel, HFInferenceModel
 
 logger = logging.getLogger(__name__)
 
@@ -10,17 +10,23 @@ class QusaiMiddleware:
     Main entry point for the QUS-AI framework.
     Orchestrates the Salat Validation Pipeline.
     """
-    
-    def __init__(self, 
-                 repo_id: str = "Qwen/Qwen2.5-7B-Instruct", 
+
+    def __init__(self,
+                 repo_id: str = "Qwen/Qwen2.5-7B-Instruct",
+                 api_token: str = None,
                  lazy_load: bool = False):
-        
+
         self.ontology = OntologyEngine()
         self.validator = MizanValidator()
-        
-        # Switch to the new Transformers Loader (GPU Native)
-        self.model = TransformersModel(repo_id)
-        
+
+        # Choose model type based on whether API token is provided
+        if api_token:
+            logger.info("Using HuggingFace Inference API mode")
+            self.model = HFInferenceModel(repo_id, api_token)
+        else:
+            logger.info("Using local Transformers GPU mode")
+            self.model = TransformersModel(repo_id)
+
         if not lazy_load:
             self.initialize()
             
